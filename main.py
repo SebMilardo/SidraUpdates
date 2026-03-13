@@ -2,12 +2,16 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 URL = "https://sidraspa.it/area-comunicazione/interventi-sulla-rete/"
+BASE = "https://sidraspa.it"
+
 STATE_FILE = "last.json"
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHAT_ID = os.environ["CHAT_ID"]
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 
 def load_state():
@@ -22,15 +26,15 @@ def save_state(state):
         json.dump(state, f)
 
 
-def send_telegram(message):
+def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     requests.post(
         url,
         data={
             "chat_id": CHAT_ID,
-            "text": message,
-            "disable_web_page_preview": True,
+            "text": msg,
+            "disable_web_page_preview": False,
         },
         timeout=20,
     )
@@ -42,21 +46,27 @@ def fetch_notices():
 
     notices = []
 
-    for article in soup.find_all("article"):
-        title_tag = article.find(["h2", "h3", "h4", "h5"])
-        link_tag = article.find("a")
+    cards = soup.select("div.card")
+
+    for card in cards:
+
+        title_tag = card.select_one("h5.card-title a")
+        date_tag = card.select_one("span.data")
+        text_tag = card.select_one("p.card-text")
 
         if not title_tag:
             continue
 
         title = title_tag.get_text(strip=True)
-
-        link = None
-        if link_tag and link_tag.get("href"):
-            link = link_tag["href"]
+        link = BASE + title_tag["href"]
+        date = date_tag.get_text(strip=True) if date_tag else ""
+        text = text_tag.get_text(strip=True)[:300] if text_tag else ""
 
         notices.append({
+            "id": link,
             "title": title,
+            "date": date,
+            "text": text,
             "link": link
         })
 
@@ -69,20 +79,23 @@ def main():
 
     notices = fetch_notices()
 
-    new_notices = []
-
-    for notice in notices:
-        if notice["title"] not in seen:
-            new_notices.append(notice)
+    new_notices = [n for n in notices if n["id"] not in seen]
 
     if new_notices:
+
         for notice in reversed(new_notices):
 
-            message = f"🚰 Nuovo intervento SIDRA\n\n{notice['title']}\n\n{URL}"
+            message = (
+                f"🚰 Nuovo intervento SIDRA\n\n"
+                f"{notice['title']}\n"
+                f"{notice['date']}\n\n"
+                f"{notice['text']}...\n\n"
+                f"{notice['link']}"
+            )
 
             send_telegram(message)
 
-            seen.add(notice["title"])
+            seen.add(notice["id"])
 
         save_state({"seen": list(seen)})
 
